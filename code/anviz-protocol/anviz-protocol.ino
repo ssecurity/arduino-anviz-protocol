@@ -160,14 +160,21 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
         outdata[8+i] = data[i];
         }
     crc = crc16(outdata,8+datacount);
-    outdata[8+datacount] = (crc >> 8) % 256;
-    outdata[9+datacount] = crc % 256;
+    outdata[9+datacount] = (crc >> 8) % 256;
+    outdata[8+datacount] = crc % 256;
+    
+    digitalWrite(22,HIGH);
+    delay(50);
     for(i = 0; i < 10+datacount; i++) {
         if (outdata[i] < 16) {
-            Serial.print("0");
+            //Serial.print("0");
             }
-        Serial.print(outdata[i],HEX);
+        //Serial.print(outdata[i],HEX);
+        Serial1.write(outdata[i]);
         }
+    delay(50);
+    digitalWrite(22,LOW);
+    
     Serial.println("");    
     }
 
@@ -191,7 +198,13 @@ void openDoor(unsigned long device_id){
   }
 
 void setup() {
+  pinMode(22,OUTPUT);
+  digitalWrite(22,LOW);
+  
+  Serial1.begin(9600);
   Serial.begin(9600);
+  Serial.println("Start..");
+  delay(2000);
   openDoor(0);
   }
 
