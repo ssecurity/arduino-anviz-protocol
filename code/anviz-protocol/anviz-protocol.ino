@@ -50,7 +50,7 @@
 #define CMD_ALL_SET_TIME 0x39               //Set the date and time of T&A
 #define CMD_ALL_GET_TCPPARAMS 0x3A          //Get TCP/IP parameters
 #define CMD_ALL_SET_TCPPARAMS 0x3B          //Set TCP/IP parameters
-#define CMD_ALL_GET_RECORD_INFO 0x3C        //Get record information
+#define CMD_ALL_GET_RECORD_INFO 0x3C        // Get record information
 #define CMD_ALL_CLEAR_ADM_FLAG 0x3D         //Clear administrator flag
 #define CMD_ALL_GET_ENROLL_DATE 0x3E        //Read employees enrollment timestamp
 #define CMD_ALL_SET_ENROLL_DATE 0x3F        //Set time stamp
@@ -84,7 +84,7 @@
 #define CMD_ALL_SET_PARAM_TBL 0x5B          //Set T&A State parameter table
 #define CMD_ALL_ENROLL_USER_FP 0x5C         //Enroll user FP online
 #define CMD_ALL_GET_CAPACITY 0x5D           //Get device capacity parameter
-#define CMD_ALL_OPEN_DOOR 0x5E              //Output signal to open lock without verifying user
+#define CMD_ALL_OPEN_DOOR 0x5E              // Output signal to open lock without verifying user
 #define CMD_ALL_SENT_RECORD 0x5F            //Sent T&A record in real time
 #define CMD_ALL_GET_CUST_TBL 0x70           //Get customized T&A state table
 #define CMD_ALL_SET_CUST_TBL 0x71           //Set attendance state table
@@ -99,6 +99,20 @@
 #define CMD_ALL_SET_DEVICE_INFO_EXT 0x7B    //Modify device extend message code
 #define CMD_T5S_INQUIRE_CARD_INFO 0x7E      //T5S only. inquire information of card number
 #define CMD_C5_EMAIL_SETTINGS 0x7F          //C5 only. Sending Email
+
+// Special settings
+#define RXTX_PAUSE_TIME_MS 300              //Pause between RX and TX for correct communication
+#
+//
+
+bool resp_command_started = false;          // Marker for start answer
+String resp_command_buffer = String("");    // buffer for answer
+unsigned long sending_timeout = 0;          // time then next command will sent 
+
+
+
+
+
 
 // crc16 bits
 unsigned short _crc_table[] = {
@@ -174,11 +188,13 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
         }
     delay(50);
     digitalWrite(22,LOW);
+    // reset start position of command 
+    resp_command_started = false;
     
-    Serial.println("");    
+    
     }
 
-/* == Get the information of T&A device 1 == 
+/* == (0x30) Get the information of T&A device 1 == 
  * Get the firmware version, communication password, sleep time, volume, language, date
  * and time format, attendance state, language setting flag, command version.
  *
@@ -188,7 +204,18 @@ void getDeviceInfo(unsigned long device_id){
   sendCommand(CMD_ALL_GET_INFO,device_id,{},0);
   }
 
-/* == Output signal to open lock without verifying user 
+
+/* == (0x3C) Get record information 
+ * Get record information, including the amount of Used User, Used FP, Used Password,
+ * Used Card, All Attendance Record, and New Record
+ *
+ * params @device_id - when is "0" then all devices connected will response to this command
+ */
+void getStatistic(unsigned long device_id){
+  sendCommand(CMD_ALL_GET_RECORD_INFO,device_id,{},0);
+  }
+
+/* == (0x5E) Output signal to open lock without verifying user 
  * Force T&A device output signal to open door
  *
  * params @device_id - when is "0" then all devices connected will response to this command
@@ -197,17 +224,39 @@ void openDoor(unsigned long device_id){
   sendCommand(CMD_ALL_OPEN_DOOR,device_id,{},0);
   }
 
+/* Wait answer and stock it in buffer
+ */
+void stock_device_answer() {
+  while (Serial1.available() > 0) {
+    byte b = Serial1.read();
+    if (!resp_command_started) {
+      if (b == 0xA5) { 
+        // mark position of new command
+        resp_command_started = true;
+        }
+      } 
+    if (resp_command_started) {
+      // move time for next command 
+      sending_timeout = millis() + RXTX_PAUSE_TIME_MS;
+      // display answer
+      Serial.print(b < 16 ? "0" : "");
+      Serial.print(b, HEX);
+      }  
+    }
+  }
+
 void setup() {
   pinMode(22,OUTPUT);
-  digitalWrite(22,LOW);
-  
+  digitalWrite(22,LOW);  
   Serial1.begin(9600);
   Serial.begin(9600);
   Serial.println("Start..");
   delay(2000);
-  openDoor(0);
+  getStatistic(0);
   }
 
 void loop() {
-  
+  //
+  stock_device_answer();
+    
 }
