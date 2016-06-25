@@ -155,6 +155,37 @@ unsigned short crc16(byte data[], unsigned short datacount) {
     return crc;
     }
 
+// read value from bytes
+unsigned long readSomeBytes(byte data[], unsigned short pos, byte count = 1, bool MODE_HL = true) {
+  unsigned long result = 0;
+  byte i = 0;
+  for(i = 0; i<count; i++) {
+    unsigned long b = (data[pos + (MODE_HL ? i : count - 1 - i)] % 256);
+    result += (unsigned long)b << (byte)(i*8);
+    }
+  return result;  
+  }
+
+// simple give one byte
+byte read1B(byte data[], unsigned short pos) {
+  return data[pos];
+  }
+
+// simple give 2 bytes
+unsigned short read2B(byte data[], unsigned short pos, bool MODE_HL = true) {
+  return (unsigned short)readSomeBytes(data,pos,2,MODE_HL);
+  }
+
+// simple give 3 bytes
+unsigned int read3B(byte data[], unsigned short pos, bool MODE_HL = true) {
+  return (unsigned int)readSomeBytes(data,pos,3,MODE_HL);
+  }
+      
+// simple give 4 bytes
+unsigned long read4B(byte data[], unsigned short pos, bool MODE_HL = true) {
+  return (unsigned long)readSomeBytes(data,pos,4,MODE_HL);
+  }
+  
 void sendCommand(byte command, unsigned long device_id, byte data[], unsigned short datacount) {
     unsigned short i = 0;
     unsigned short crc = 0x0000;
@@ -189,6 +220,7 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
     delay(50);
     digitalWrite(22,LOW);
     // reset start position of command 
+    resp_command_buffer = "";
     resp_command_started = false;
     
     
@@ -224,8 +256,7 @@ void openDoor(unsigned long device_id){
   sendCommand(CMD_ALL_OPEN_DOOR,device_id,{},0);
   }
 
-/* Wait answer and stock it in buffer
- */
+// Wait answer and stock it in buffer
 void stock_device_answer() {
   while (Serial1.available() > 0) {
     byte b = Serial1.read();
@@ -238,6 +269,7 @@ void stock_device_answer() {
     if (resp_command_started) {
       // move time for next command 
       sending_timeout = millis() + RXTX_PAUSE_TIME_MS;
+      resp_command_buffer += char(b);
       // display answer
       Serial.print(b < 16 ? "0" : "");
       Serial.print(b, HEX);
@@ -245,18 +277,45 @@ void stock_device_answer() {
     }
   }
 
+// processing answer buffer 
+void process_device_answer() {
+  // buffer can contains command (11 byte - min answer)  
+  // command started
+  // and time after last char more whan RXTX_PAUSE_TIME_MS
+  if (resp_command_buffer.length() >= 11 
+      && resp_command_started 
+      && sending_timeout < millis()
+      ) {
+    // check command
+    if ((byte)resp_command_buffer.charAt(0) == 0xA5) {
+      if ((byte)resp_command_buffer.charAt(6) == ACK_SUCCESS) {
+        unsigned short answer_len = (byte)resp_command_buffer.charAt(0);
+        Serial.println("");
+        Serial.println("Command like valid..");
+        resp_command_buffer = "";
+        } else {
+          Serial.println("");
+          Serial.println("INvalid answer..");
+          }
+        }
+      }
+    }
+
 void setup() {
   pinMode(22,OUTPUT);
   digitalWrite(22,LOW);  
   Serial1.begin(9600);
   Serial.begin(9600);
+  // prepare buffer
+  resp_command_buffer.reserve(400);
   Serial.println("Start..");
-  delay(2000);
+  //delay(2000);
   getStatistic(0);
+  
   }
 
 void loop() {
   //
   stock_device_answer();
-    
+  process_device_answer();   
 }
