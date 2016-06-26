@@ -102,7 +102,8 @@
 
 // Special settings
 #define RXTX_PAUSE_TIME_MS 300              // Pause between RX and TX for correct communication
-#define MAX_ACTION_RECORDS 25               // Action records 
+#define MAX_ACTION_RECORDS 25               // Max. Action records 
+#define MAX_STAFF_RECORDS 12                // Max. Staff records
 
 bool cmd_action_first = false;              // remember last action command (is first)
 bool cmd_action_allrecords = false;         // remember last action command (new or all)
@@ -163,6 +164,46 @@ typedef struct {
     Serial.println(workType);
     }
   } strAnswerActionItem;
+
+// 0x42 answer structure
+typedef struct {
+  unsigned long userCode;                 // User Code 
+  unsigned int pwd;                       // Number of pwd+pwd
+  unsigned int cardCode;                  // Card code
+  byte Name[9] ;                          // User Name
+  byte department;                        // Department
+  byte group;                             // Group NO.
+  byte att_mode;                          // Attendance mode
+  unsigned short regFP;                   // Registered FP
+  byte specInfo;                          // Special info
+  void toString(unsigned long device_id) {
+    byte i = 0;
+    Serial.print("USER ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    Serial.print(userCode);
+    Serial.print(",");
+    Serial.print(pwd);
+    Serial.print(",");
+    Serial.print(cardCode);
+    Serial.print(",");
+    for(i=0;i<10;i++) {
+      Serial.print(Name[i] < 16 ? "0" : "");
+      Serial.print(Name[i],HEX); 
+      }
+    Serial.print(",");
+    Serial.print(department);
+    Serial.print(",");
+    Serial.print(group);
+    Serial.print(",");
+    Serial.print(att_mode);
+    Serial.print(",");
+    Serial.print(regFP);
+    Serial.print(",");
+    Serial.println(specInfo);
+    }
+  } strAnswerStaffItem;
+
             
 // 0x5E answer structure
 typedef struct {
@@ -322,6 +363,20 @@ void getActionRecords(unsigned long device_id, bool first = true, bool allrecord
   sendCommand(CMD_ALL_GET_RECORDS,device_id,data,2);
   }
 
+/* == (0x42) Download staff info
+ * Download staff info, <=12 records each time
+ *
+ * params @device_id - when is "0" then all devices connected will response to this command
+ * params @first - mean first pocket of downloading
+ */
+void getStaffRecords(unsigned long device_id, bool first = true){
+  byte data[1];
+  data[0] = (first ? 1 : 0);
+  data[1] = MAX_STAFF_RECORDS;
+  sendCommand(CMD_ALL_GET_STAFF,device_id,data,2);
+  }
+
+
 /* == (0x5E) Output signal to open lock without verifying user 
  * Force T&A device output signal to open door
  *
@@ -355,6 +410,7 @@ void stock_device_answer() {
 // processing pocket data
 void pocket_processing(byte data[], unsigned short datacount) {
   unsigned short i = 0;
+  unsigned short j = 0;
   byte cnt = 0;
   if (data[0] == 0xA5) {
     unsigned short answer_len = read2B(data,7, false);
@@ -390,13 +446,34 @@ void pocket_processing(byte data[], unsigned short datacount) {
               answ_40.recordType = read1B(data,20+i*14);
               answ_40.workType = read3B(data,21+i*14);              
               answ_40.toString(device_id);
-              }      
-                    
+              }     
             // so, maybe we need more requests for more records
             if (cnt == MAX_ACTION_RECORDS) {
               getActionRecords(device_id,false,cmd_action_allrecords);
               }
-            
+            break;
+
+            case CMD_ALL_GET_STAFF + 0x80: // (0x42 + 0x80) Download staff info
+            cnt = read1B(data,9);
+            for(i = 0; i < cnt; i++) {
+              strAnswerStaffItem answ_42;
+              answ_42.userCode = readSomeBytes(data,10+i*27,5, false);
+              answ_42.pwd = read3B(data,15+i*27, false);
+              answ_42.cardCode = read3B(data,18+i*27, false);
+              for(j = 0; j < 10; j++) {
+                answ_42.Name[j] = data[21+i*27+j];
+                }
+              answ_42.department = data[31+i*27];
+              answ_42.group = data[32+i*27];
+              answ_42.att_mode = data[33+i*27];              
+              answ_42.regFP = read2B(data, 34+i*27, false);              
+              answ_42.specInfo = data[36+i*27];              
+              answ_42.toString(device_id);
+              }     
+            // so, maybe we need more requests for more records
+            if (cnt == MAX_STAFF_RECORDS) {
+              getStaffRecords(device_id,false);
+              }
             break;
 
             case CMD_ALL_OPEN_DOOR + 0x80: // (0x5E + 0x80) Output signal to open lock without verifying user 
@@ -463,11 +540,11 @@ void setup() {
   // prepare buffer
   Serial.println("Start..");
   //delay(2000);
-  getStatistic(0);
+  //getStatistic(0);
   //openDoor(0);
   //getActionRecords(0,true,true); //all
   //getActionRecords(0,true,false);  //new
-  
+  getStaffRecords(0,true);
   }
 
 void loop() {
