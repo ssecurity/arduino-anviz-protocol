@@ -101,17 +101,70 @@
 #define CMD_C5_EMAIL_SETTINGS 0x7F          //C5 only. Sending Email
 
 // Special settings
-#define RXTX_PAUSE_TIME_MS 300              //Pause between RX and TX for correct communication
-#
-//
+#define RXTX_PAUSE_TIME_MS 300              // Pause between RX and TX for correct communication
+#define MAX_ACTION_RECORDS 25               // Action records 
 
 bool resp_command_started = false;          // Marker for start answer
 String resp_command_buffer = String("");    // buffer for answer
 unsigned long sending_timeout = 0;          // time then next command will sent 
 
 
+// 0x3C answer structure
+typedef struct {
+  unsigned int userAmount;                  // User Amount 
+  unsigned int fpAmount ;                   // FP Amount 
+  unsigned int passAmount ;                 // Password Amount   
+  unsigned int cardAmount ;                 // Card Amount
+  unsigned int allRecAmount ;               // All Record Amount
+  unsigned int newRecAmount ;               // New Record Amount
+  void toString(unsigned long device_id) {
+    Serial.print("STAT ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    Serial.print(userAmount);
+    Serial.print(",");
+    Serial.print(fpAmount);
+    Serial.print(",");
+    Serial.print(passAmount);
+    Serial.print(",");
+    Serial.print(cardAmount);
+    Serial.print(",");
+    Serial.print(allRecAmount);
+    Serial.print(",");
+    Serial.println(newRecAmount);
+    }
+  } strAnswerStatistic;
 
-
+// 0x40 answer structure
+typedef struct {
+  unsigned long userCode;                 // User Code 
+  unsigned long dt;                       // date & time 
+  byte backupCode ;                       // Backup code: data 3—Card data2—Password data1—FP2 data 0—FP1
+  byte recordType ;                       // Record type, if bit 7 is 1,it means this record can open door;if 0,can’t open door. the low 4 bits is attendance state.
+  unsigned int workType ;                 // Work types 
+  void toString(unsigned long device_id) {
+    Serial.print("ACTION ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    Serial.print(userCode);
+    Serial.print(",");
+    Serial.print(dt);
+    Serial.print(",");
+    Serial.print(backupCode);
+    Serial.print(",");
+    Serial.print(recordType);
+    Serial.print(",");
+    Serial.println(workType);
+    }
+  } strAnswerActionItem;
+            
+// 0x5E answer structure
+typedef struct {
+    void toString(unsigned long device_id) {
+    Serial.print("OPENDOOR ");
+    Serial.println(device_id);
+    }
+  } strAnswerOpenDoor;
 
 
 // crc16 bits
@@ -214,7 +267,6 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
         if (outdata[i] < 16) {
             //Serial.print("0");
             }
-        //Serial.print(outdata[i],HEX);
         Serial1.write(outdata[i]);
         }
     delay(50);
@@ -247,6 +299,20 @@ void getStatistic(unsigned long device_id){
   sendCommand(CMD_ALL_GET_RECORD_INFO,device_id,{},0);
   }
 
+/* == (0x40) Download T&A records 
+ * download record, the downloading max number is 25 each time.
+ *
+ * params @device_id - when is "0" then all devices connected will response to this command
+ * params @first - mean first pocket of downloading
+ * params @allrecords - all or new only records
+ */
+void getActionRecords(unsigned long device_id, bool first = true, bool allrecords = false){
+  byte data[1];
+  data[0] = (first ? (allrecords ? 1 : 2) : 0);
+  data[1] = MAX_ACTION_RECORDS;
+  sendCommand(CMD_ALL_GET_RECORDS,device_id,data,2);
+  }
+
 /* == (0x5E) Output signal to open lock without verifying user 
  * Force T&A device output signal to open door
  *
@@ -277,8 +343,61 @@ void stock_device_answer() {
     }
   }
 
+// processing pocket data
+void pocket_processing(byte data[], unsigned short datacount) {
+  unsigned short i = 0;
+  byte cnt = 0;
+  if (data[0] == 0xA5) {
+    unsigned short answer_len = read2B(data,7, false);
+    if (data[6] == ACK_SUCCESS) {
+      unsigned short crc = crc16(data,9 + answer_len);
+      if (datacount >= (11 + answer_len)) {  
+        if (read2B(data,9 + answer_len)==crc) {
+          // valid command format
+          unsigned long device_id = read4B(data,1, false);
+          switch(data[5]) {
+            case CMD_ALL_GET_INFO + 0x80: // (0x30 + 0x80) Get the information of T&A device 1
+            Serial.println("Get the information of T&A device 1");
+            break;
+            
+            case CMD_ALL_GET_RECORD_INFO + 0x80: // (0x3C + 0x80) Get record information 
+            strAnswerStatistic answ_3C;
+            answ_3C.userAmount = read3B(data,9, false);
+            answ_3C.fpAmount = read3B(data,12, false);
+            answ_3C.passAmount = read3B(data,15, false);
+            answ_3C.cardAmount = read3B(data,18, false);
+            answ_3C.allRecAmount = read3B(data,21, false);
+            answ_3C.newRecAmount = read3B(data,24, false);
+            answ_3C.toString(device_id);
+            break;
+
+            case CMD_ALL_GET_RECORDS + 0x80: // (0x40 + 0x80) Download T&A records
+            cnt = read1B(data,9);
+            for(i = 0; i < cnt; i++) {
+              strAnswerActionItem answ_40;
+              answ_40.userCode = readSomeBytes(data,10+i*14,5, false);
+              answ_40.dt = read4B(data,15+i*14, false);;
+              answ_40.backupCode = read1B(data,19+i*14);
+              answ_40.recordType = read1B(data,20+i*14);
+              answ_40.workType = read3B(data,21+i*14);              
+              answ_40.toString(device_id);
+              }            
+            break;
+
+            case CMD_ALL_OPEN_DOOR + 0x80: // (0x5E + 0x80) Output signal to open lock without verifying user 
+            strAnswerOpenDoor answ_5E;
+            answ_5E.toString(device_id);            
+            break;
+            }
+          }
+        }        
+      }    
+    }
+  }
+
 // processing answer buffer 
 void process_device_answer() {
+  unsigned short i = 0;
   // buffer can contains command (11 byte - min answer)  
   // command started
   // and time after last char more whan RXTX_PAUSE_TIME_MS
@@ -286,20 +405,33 @@ void process_device_answer() {
       && resp_command_started 
       && sending_timeout < millis()
       ) {
+    Serial.println("");
     // check command
     if ((byte)resp_command_buffer.charAt(0) == 0xA5) {
       if ((byte)resp_command_buffer.charAt(6) == ACK_SUCCESS) {
-        unsigned short answer_len = (byte)resp_command_buffer.charAt(0);
-        Serial.println("");
-        Serial.println("Command like valid..");
-        resp_command_buffer = "";
-        } else {
-          Serial.println("");
-          Serial.println("INvalid answer..");
+        unsigned short answer_len = (unsigned short)resp_command_buffer.charAt(7) * 256 + (unsigned short)resp_command_buffer.charAt(8);
+        if (resp_command_buffer.length() >= (11 + answer_len)) {  
+          // check CRC for pocket
+          byte pocket[11 + answer_len];
+          for(i = 0; i < 11 + answer_len; i++) {
+            pocket[i] = (byte)resp_command_buffer.charAt(i);
+            }
+          // reset command:-)
+          resp_command_buffer = "";
+          resp_command_started = false;
+          unsigned short crc = crc16(pocket,9 + answer_len);
+          if (read2B(pocket,9 + answer_len)==crc) {
+            // CRC valid, ready for command processing
+            pocket_processing(pocket,11 + answer_len);
+            } 
           }
+      } else {
+        resp_command_buffer = "";
+        resp_command_started = false; 
         }
       }
     }
+  }
 
 void setup() {
   pinMode(22,OUTPUT);
@@ -310,7 +442,8 @@ void setup() {
   resp_command_buffer.reserve(400);
   Serial.println("Start..");
   //delay(2000);
-  getStatistic(0);
+  //getStatistic(0);
+  getActionRecords(0,true,false);
   
   }
 
