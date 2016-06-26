@@ -42,21 +42,21 @@
 #define CMD_OA3000_GET_PHOTO 0x2C           //OA1000/OA3000/761platform. Read specified photo file
 #define CMD_OA3000_DEL_PHOTO 0x2D           //OA1000/OA3000/761platform. Delete specified photo
 #define CMD_V30_GET_SPEC_STATE 0x2F         //VF30/VP30/T60+use only. Get special state
-#define CMD_ALL_GET_INFO 0x30               //Get the information of T&A device 1
+#define CMD_ALL_GET_INFO 0x30               //  Get the information of T&A device 1
 #define CMD_ALL_SET_INFO 0x31               //Set the configure information of T&A 1
 #define CMD_ALL_GET_INFO2 0x32              //Get the information of T&A device 2
 #define CMD_ALL_SET_INFO2 0x33              //Set the configure information of T&A 2
-#define CMD_ALL_GET_TIME 0x38               //Get the date and time of T&A
+#define CMD_ALL_GET_TIME 0x38               //  Get the date and time of T&A
 #define CMD_ALL_SET_TIME 0x39               //Set the date and time of T&A
 #define CMD_ALL_GET_TCPPARAMS 0x3A          //Get TCP/IP parameters
 #define CMD_ALL_SET_TCPPARAMS 0x3B          //Set TCP/IP parameters
-#define CMD_ALL_GET_RECORD_INFO 0x3C        // Get record information
+#define CMD_ALL_GET_RECORD_INFO 0x3C        //  Get record information
 #define CMD_ALL_CLEAR_ADM_FLAG 0x3D         //Clear administrator flag
 #define CMD_ALL_GET_ENROLL_DATE 0x3E        //Read employees enrollment timestamp
 #define CMD_ALL_SET_ENROLL_DATE 0x3F        //Set time stamp
-#define CMD_ALL_GET_RECORDS 0x40            //Download T&A records
+#define CMD_ALL_GET_RECORDS 0x40            //  Download T&A records
 #define CMD_ALL_SET_RECORDS 0x41            //Upload T&A records
-#define CMD_ALL_GET_STAFF 0x42              //Download staff info
+#define CMD_ALL_GET_STAFF 0x42              //  Download staff info
 #define CMD_ALL_SET_STAFF 0x43              //Upload staff info
 #define CMD_ALL_GET_FP_TPL 0x44             //Download FP Template
 #define CMD_ALL_SET_FP_TPL 0x45             //Upload FP Template
@@ -84,7 +84,7 @@
 #define CMD_ALL_SET_PARAM_TBL 0x5B          //Set T&A State parameter table
 #define CMD_ALL_ENROLL_USER_FP 0x5C         //Enroll user FP online
 #define CMD_ALL_GET_CAPACITY 0x5D           //Get device capacity parameter
-#define CMD_ALL_OPEN_DOOR 0x5E              // Output signal to open lock without verifying user
+#define CMD_ALL_OPEN_DOOR 0x5E              //  Output signal to open lock without verifying user
 #define CMD_ALL_SENT_RECORD 0x5F            //Sent T&A record in real time
 #define CMD_ALL_GET_CUST_TBL 0x70           //Get customized T&A state table
 #define CMD_ALL_SET_CUST_TBL 0x71           //Set attendance state table
@@ -115,6 +115,71 @@ unsigned short resp_command_buffer_len = 0; // buffer length for answer
 
 unsigned long sending_timeout = 0;          // time then next command will sent 
 
+// 0x30 answer structure
+typedef struct {
+  byte Firmware[7];                         // Firmware version
+  unsigned int cpwd;                        // Communication password and its length
+  byte sleep_time;                          // Sleep time   
+  byte volume;                              // Volume
+  byte Language;                            // Language
+  byte dtformat;                            // Date / Time format
+  byte att_state;                           // Attendance state
+  byte lang_set_flag;                       // Language setting flag
+  byte cmd_version;                         // Command version
+  
+  void toString(unsigned long device_id) {
+    byte i = 0;
+    Serial.print("DEVINFO ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    for(i=0;i<8;i++) {
+      Serial.print(Firmware[i] < 16 ? "0" : "");
+      Serial.print(Firmware[i],HEX); 
+      }    
+    Serial.print(",");
+    Serial.print(cpwd);
+    Serial.print(",");
+    Serial.print(sleep_time);
+    Serial.print(",");
+    Serial.print(volume);
+    Serial.print(",");
+    Serial.print(Language);
+    Serial.print(",");
+    Serial.print(dtformat);
+    Serial.print(",");
+    Serial.print(att_state);
+    Serial.print(",");
+    Serial.print(lang_set_flag);
+    Serial.print(",");
+    Serial.println(cmd_version);
+    }
+  } strAnswerDeviceInfo;
+
+// 0x38 answer structure
+typedef struct {
+  byte _year;                               // year
+  byte _month ;                             // month
+  byte _day ;                               // day   
+  byte _hour ;                              // hour
+  byte _minute ;                            // minute
+  byte _second ;                            // second
+  void toString(unsigned long device_id) {
+    Serial.print("DATETIME ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    Serial.print(2000+_year);
+    Serial.print("-");
+    Serial.print(_month);
+    Serial.print("-");
+    Serial.print(_day);
+    Serial.print(" ");
+    Serial.print(_hour);
+    Serial.print(":");
+    Serial.print(_minute);
+    Serial.print(":");
+    Serial.println(_second);
+    }
+  } strAnswerDateTime;
 
 // 0x3C answer structure
 typedef struct {
@@ -335,6 +400,14 @@ void getDeviceInfo(unsigned long device_id){
   sendCommand(CMD_ALL_GET_INFO,device_id,{},0);
   }
 
+/* == (0x38) Get the date and time of T&A == 
+ * Get the date and time of T&A
+ *
+ * params @device_id - when is "0" then all devices connected will response to this command
+ */
+void getDeviceDateTime(unsigned long device_id){
+  sendCommand(CMD_ALL_GET_TIME,device_id,{},0);
+  }
 
 /* == (0x3C) Get record information 
  * Get record information, including the amount of Used User, Used FP, Used Password,
@@ -375,7 +448,6 @@ void getStaffRecords(unsigned long device_id, bool first = true){
   data[1] = MAX_STAFF_RECORDS;
   sendCommand(CMD_ALL_GET_STAFF,device_id,data,2);
   }
-
 
 /* == (0x5E) Output signal to open lock without verifying user 
  * Force T&A device output signal to open door
@@ -422,7 +494,30 @@ void pocket_processing(byte data[], unsigned short datacount) {
           unsigned long device_id = read4B(data,1, false);
           switch(data[5]) {
             case CMD_ALL_GET_INFO + 0x80: // (0x30 + 0x80) Get the information of T&A device 1
-            Serial.println("Get the information of T&A device 1");
+            strAnswerDeviceInfo answ_30;
+            for(byte xj=0;xj<8;xj++){
+              answ_30.Firmware[xj] = data[xj+9];
+              }
+            answ_30.cpwd = read3B(data,17, false);
+            answ_30.sleep_time = data[20];
+            answ_30.volume = data[21];
+            answ_30.Language = data[22];
+            answ_30.dtformat = data[23];
+            answ_30.att_state = data[24];
+            answ_30.lang_set_flag = data[25];
+            answ_30.cmd_version = data[26];
+            answ_30.toString(device_id);
+            break;
+
+            case CMD_ALL_GET_TIME + 0x80: // (0x38 + 0x80) Get the date and time of T&A
+            strAnswerDateTime answ_38;
+            answ_38._year = data[9];
+            answ_38._month = data[10];
+            answ_38._day = data[11];
+            answ_38._hour = data[12];
+            answ_38._minute = data[13];
+            answ_38._second = data[14];
+            answ_38.toString(device_id);
             break;
             
             case CMD_ALL_GET_RECORD_INFO + 0x80: // (0x3C + 0x80) Get record information 
@@ -504,8 +599,6 @@ void process_device_answer() {
         unsigned short answer_len = (unsigned short)resp_command_buffer[7] * 256 + (unsigned short)resp_command_buffer[8];
         if (resp_command_buffer_len >= (11 + answer_len)) {  
           // check CRC for pocket
-        
-        
           byte pocket[11 + answer_len];
           for(i = 0; i < 11 + answer_len; i++) {
             pocket[i] = resp_command_buffer[i];
@@ -520,8 +613,6 @@ void process_device_answer() {
           } else {
             resp_command_buffer_len = 0;
             resp_command_started = false;
-            Serial.println("");
-            Serial.println("CRC INVALID");    
             }
           }
       } else {
@@ -544,7 +635,9 @@ void setup() {
   //openDoor(0);
   //getActionRecords(0,true,true); //all
   //getActionRecords(0,true,false);  //new
-  getStaffRecords(0,true);
+  //getStaffRecords(0,true);
+  //getDeviceDateTime(0);
+  getDeviceInfo(0);
   }
 
 void loop() {
