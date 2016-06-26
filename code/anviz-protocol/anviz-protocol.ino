@@ -121,7 +121,10 @@ unsigned short inc_buffer_len = 0;          // incomming buffer length for contr
 unsigned long sending_timeout = 0;          // time then next command will sent 
 unsigned long reading_timeout = 0;          // time then we wait all data from Serial 
 
-// 0x5E answer structure
+byte clearup_mode = 0;
+
+
+// serial answer structure
 typedef struct {
     char param_name[50];
     byte param_size = 0;
@@ -295,6 +298,17 @@ typedef struct {
     }
   } strAnswerStaffItem;
 
+
+// 0x4E answer structure
+typedef struct {
+    unsigned int amount;
+    void toString(unsigned long device_id) {
+    Serial.print("ACTCLEAR ");
+    Serial.print(device_id);
+    Serial.print(",");
+    Serial.println(amount);
+    }
+  } strAnswerCleanUp;
             
 // 0x5E answer structure
 typedef struct {
@@ -470,6 +484,31 @@ void getStaffRecords(unsigned long device_id, bool first = true){
   sendCommand(CMD_ALL_GET_STAFF,device_id,zdata,2);
   }
 
+/* == (0x4E) Clear up Records /Clear new records sign
+ * Cancel all records, or cancel all/part new records sign.
+ *
+ * params @device_id - when is "0" then all devices connected will response to this command
+ * params @mode - 0 - Clear up Records.
+ *                1 - Clear all the new Records sign 
+ *                2 - Clear the designated "amount" new records sign
+ * params @amount - amount records for delete
+ */
+void clearUpRecords(unsigned long device_id, byte mode, unsigned int amount = 0){
+  clearup_mode = 0;
+  switch(mode) {
+    case 1: case 2:
+    clearup_mode = mode;
+    break;
+    }  
+  byte zdata[3];
+  zdata[0] = clearup_mode; 
+  zdata[1] =  (amount / 256 / 256) % 256;
+  zdata[2] =  (amount / 256) % 256;
+  zdata[3] =   amount % 256; 
+    
+  sendCommand(CMD_ALL_CLR_RECORDS,device_id,zdata,4);
+  }
+
 /* == (0x5E) Output signal to open lock without verifying user 
  * Force T&A device output signal to open door
  *
@@ -593,6 +632,12 @@ void pocket_processing(byte data[], unsigned short datacount) {
               }
             break;
 
+            case CMD_ALL_CLR_RECORDS + 0x80: // (0x4E + 0x80) Clear up Records /Clear new records sign
+            strAnswerCleanUp answ_4E;
+            answ_4E.amount = read3B(data,9, false);            
+            answ_4E.toString(device_id);            
+            break;
+
             case CMD_ALL_OPEN_DOOR + 0x80: // (0x5E + 0x80) Output signal to open lock without verifying user 
             strAnswerOpenDoor answ_5E;
             answ_5E.toString(device_id);            
@@ -676,7 +721,7 @@ void serial_processing() {
       byte b = Serial1.read();
       }   
     Serial1.flush();
-    Serial.println("");
+    Serial.print("");
     serialCommand cmd;
     cmd.parseCommand(inc_buffer,inc_buffer_len);
     unsigned long device_id = 0;
@@ -700,7 +745,17 @@ void serial_processing() {
       getActionRecords(device_id,true,true);  
     } else if (str_cmd == "GET_NEW_ACTIONS") {
       getActionRecords(device_id,true,false);  
-      }
+    } else if (str_cmd == "CLEAR_ALL") {
+      clearUpRecords(device_id,0,0);  
+    } else if (str_cmd == "CLEAR_NEW") {
+      clearUpRecords(device_id,1,0);  
+    } else if (str_cmd == "CLEAR_NEWPART") {
+      clearUpRecords(device_id,2,1);  
+    }
+
+
+
+      
     inc_buffer_len = 0;
     inc_readonly = false;
     }
@@ -712,13 +767,12 @@ void setup() {
   Serial1.begin(9600);
   Serial.begin(9600);
   // prepare buffer
-  Serial.println("Start..");
   //delay(2000);
   //openDoor(0);
   //getStatistic(0);
   //getActionRecords(0,true,true); //all
   //getActionRecords(0,true,false);  //new
-  getStaffRecords(0,true);
+  //getStaffRecords(0,true);
   //getDeviceDateTime(0);
   //getDeviceInfo(0);
   }
