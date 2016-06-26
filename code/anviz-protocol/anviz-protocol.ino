@@ -102,6 +102,8 @@
 
 // Special settings
 #define RXTX_PAUSE_TIME_MS 300              // Pause between RX and TX for correct communication
+#define SERIAL_PAUSE_TIME_MS 300            // Pause between RX and TX for correct communication
+
 #define MAX_ACTION_RECORDS 25               // Max. Action records 
 #define MAX_STAFF_RECORDS 12                // Max. Staff records
 
@@ -113,7 +115,31 @@ bool resp_command_started = false;          // Marker for start answer
 byte resp_command_buffer[400];              // buffer for answer
 unsigned short resp_command_buffer_len = 0; // buffer length for answer
 
+bool inc_readonly = false;                  // readonly for Serial
+byte inc_buffer[50];                        // incomming buffer for control
+unsigned short inc_buffer_len = 0;          // incomming buffer length for control
 unsigned long sending_timeout = 0;          // time then next command will sent 
+unsigned long reading_timeout = 0;          // time then we wait all data from Serial 
+
+// 0x5E answer structure
+typedef struct {
+    char param_name[50];
+    byte param_size = 0;
+    unsigned long device_id = 0; 
+    void parseCommand(byte data[], byte datacount) {
+      byte i = 0;
+      param_size = 0;
+      for(i=0;i<datacount;i++) {
+        if (data[i]==0x20) {
+          return;
+        } else {
+          param_name[param_size]=char(data[i]);
+          param_size++;
+          }
+        }      
+      };      
+  } serialCommand;
+
 
 // 0x30 answer structure
 typedef struct {
@@ -350,11 +376,13 @@ unsigned int read3B(byte data[], unsigned short pos, bool MODE_HL = true) {
 unsigned long read4B(byte data[], unsigned short pos, bool MODE_HL = true) {
   return (unsigned long)readSomeBytes(data,pos,4,MODE_HL);
   }
-  
+
+ 
 void sendCommand(byte command, unsigned long device_id, byte data[], unsigned short datacount) {
     unsigned short i = 0;
     unsigned short crc = 0x0000;
     byte outdata[9+datacount];
+    Serial.print("");
     for(i = 0; i < 10+datacount; i++) {
         outdata[i] = 0x00;
         }
@@ -372,17 +400,14 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
     crc = crc16(outdata,8+datacount);
     outdata[9+datacount] = (crc >> 8) % 256;
     outdata[8+datacount] = crc % 256;
-    
     digitalWrite(22,HIGH);
-    delay(50);
+    delay(20);
     for(i = 0; i < 10+datacount; i++) {
-        if (outdata[i] < 16) {
-            //Serial.print("0");
-            }
         Serial1.write(outdata[i]);
         }
-    delay(50);
+    delay(20);
     digitalWrite(22,LOW);
+    delay(30);
     // reset start position of command 
     resp_command_buffer_len = 0;
     resp_command_started = false;
@@ -491,6 +516,7 @@ void pocket_processing(byte data[], unsigned short datacount) {
       if (datacount >= (11 + answer_len)) {  
         if (read2B(data,9 + answer_len)==crc) {
           // valid command format
+          Serial.print("");
           unsigned long device_id = read4B(data,1, false);
           switch(data[5]) {
             case CMD_ALL_GET_INFO + 0x80: // (0x30 + 0x80) Get the information of T&A device 1
@@ -623,6 +649,63 @@ void process_device_answer() {
     }
   }
 
+// read serial events
+void serial_events(){
+  byte i = 0;
+    while(Serial.available() > 0) {
+      byte b = Serial.read();
+      Serial.print(char(b));    
+      if (b != 0x0A && !inc_readonly) {        
+        inc_buffer[inc_buffer_len] = b;
+        inc_buffer_len++;
+        inc_buffer_len = inc_buffer_len % 51;
+        reading_timeout = millis() + SERIAL_PAUSE_TIME_MS;
+      } else {
+        // processing command
+        inc_readonly = true;     
+        }
+      }  
+    }
+
+
+
+void serial_processing() {
+  if (millis() > reading_timeout && inc_buffer_len > 0) {
+    while(Serial.available() > 0) {
+      byte b = Serial.read();
+      }
+    Serial.flush();
+    
+    while(Serial1.available() > 0) {
+      byte b = Serial1.read();
+      }   
+    Serial1.flush();
+    Serial.println("");
+    serialCommand cmd;
+    cmd.parseCommand(inc_buffer,inc_buffer_len);
+    unsigned long device_id = 0;
+    String str_cmd = "";
+    str_cmd.reserve(cmd.param_size);
+    str_cmd = "";
+    for(byte ix = 0; ix < cmd.param_size;ix++) {
+      str_cmd += cmd.param_name[ix];  
+      }
+    if (str_cmd == "OPEN_DOOR") {
+      openDoor(device_id);  
+    } else if (str_cmd == "GET_DEVINFO") {
+      getDeviceInfo(device_id);  
+    } else if (str_cmd == "GET_DT") {
+      getDeviceDateTime(device_id);  
+    } else if (str_cmd == "GET_STAT") {
+      getStatistic(device_id);  
+    } else if (str_cmd == "GET_STAFF") {
+      getStaffRecords(device_id,true);  
+      }
+    inc_buffer_len = 0;
+    inc_readonly = false;
+    }
+  }  
+
 void setup() {
   pinMode(22,OUTPUT);
   digitalWrite(22,LOW);  
@@ -631,17 +714,46 @@ void setup() {
   // prepare buffer
   Serial.println("Start..");
   //delay(2000);
-  //getStatistic(0);
   //openDoor(0);
+  //getStatistic(0);
   //getActionRecords(0,true,true); //all
   //getActionRecords(0,true,false);  //new
-  //getStaffRecords(0,true);
+  getStaffRecords(0,true);
   //getDeviceDateTime(0);
-  getDeviceInfo(0);
+  //getDeviceInfo(0);
   }
 
 void loop() {
   //
   stock_device_answer();
-  process_device_answer();   
+  process_device_answer();
+  //serial_events(); 
+  if (inc_readonly) {
+    serial_processing();  
+    }
+  if (millis() % 10000 == 0) {
+    Serial.println();
+    getStaffRecords(0,true); //all
+    }  
 }
+
+// 
+void serialEvent(){
+  byte i = 0;
+  while(Serial.available() > 0) {
+    byte b = Serial.read();
+    if (!inc_readonly) {
+      if (b != 0x0A) {        
+        inc_buffer[inc_buffer_len] = b;
+        inc_buffer_len++;
+        inc_buffer_len = inc_buffer_len % 51;
+        reading_timeout = millis() + SERIAL_PAUSE_TIME_MS;
+      } else {
+        // processing command
+        Serial.print("");
+        inc_readonly = true;     
+        }
+      }
+    }  
+  
+  }
