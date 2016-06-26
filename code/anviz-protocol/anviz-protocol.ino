@@ -104,8 +104,14 @@
 #define RXTX_PAUSE_TIME_MS 300              // Pause between RX and TX for correct communication
 #define MAX_ACTION_RECORDS 25               // Action records 
 
+bool cmd_action_first = false;              // remember last action command (is first)
+bool cmd_action_allrecords = false;         // remember last action command (new or all)
+
+
 bool resp_command_started = false;          // Marker for start answer
-String resp_command_buffer = String("");    // buffer for answer
+byte resp_command_buffer[400];              // buffer for answer
+unsigned short resp_command_buffer_len = 0; // buffer length for answer
+
 unsigned long sending_timeout = 0;          // time then next command will sent 
 
 
@@ -272,7 +278,7 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
     delay(50);
     digitalWrite(22,LOW);
     // reset start position of command 
-    resp_command_buffer = "";
+    resp_command_buffer_len = 0;
     resp_command_started = false;
     
     
@@ -310,6 +316,9 @@ void getActionRecords(unsigned long device_id, bool first = true, bool allrecord
   byte data[1];
   data[0] = (first ? (allrecords ? 1 : 2) : 0);
   data[1] = MAX_ACTION_RECORDS;
+  // try to save arguments to memory
+  cmd_action_first = first;
+  cmd_action_allrecords = allrecords;
   sendCommand(CMD_ALL_GET_RECORDS,device_id,data,2);
   }
 
@@ -329,16 +338,16 @@ void stock_device_answer() {
     if (!resp_command_started) {
       if (b == 0xA5) { 
         // mark position of new command
+        resp_command_buffer_len = 0;
         resp_command_started = true;
         }
-      } 
+      }
     if (resp_command_started) {
+      resp_command_buffer_len++;
       // move time for next command 
       sending_timeout = millis() + RXTX_PAUSE_TIME_MS;
-      resp_command_buffer += char(b);
+      resp_command_buffer[resp_command_buffer_len-1] = b;
       // display answer
-      Serial.print(b < 16 ? "0" : "");
-      Serial.print(b, HEX);
       }  
     }
   }
@@ -381,7 +390,13 @@ void pocket_processing(byte data[], unsigned short datacount) {
               answ_40.recordType = read1B(data,20+i*14);
               answ_40.workType = read3B(data,21+i*14);              
               answ_40.toString(device_id);
-              }            
+              }      
+                    
+            // so, maybe we need more requests for more records
+            if (cnt == MAX_ACTION_RECORDS) {
+              getActionRecords(device_id,false,cmd_action_allrecords);
+              }
+            
             break;
 
             case CMD_ALL_OPEN_DOOR + 0x80: // (0x5E + 0x80) Output signal to open lock without verifying user 
@@ -401,32 +416,39 @@ void process_device_answer() {
   // buffer can contains command (11 byte - min answer)  
   // command started
   // and time after last char more whan RXTX_PAUSE_TIME_MS
-  if (resp_command_buffer.length() >= 11 
+  if (resp_command_buffer_len >= 11 
       && resp_command_started 
       && sending_timeout < millis()
       ) {
-    Serial.println("");
     // check command
-    if ((byte)resp_command_buffer.charAt(0) == 0xA5) {
-      if ((byte)resp_command_buffer.charAt(6) == ACK_SUCCESS) {
-        unsigned short answer_len = (unsigned short)resp_command_buffer.charAt(7) * 256 + (unsigned short)resp_command_buffer.charAt(8);
-        if (resp_command_buffer.length() >= (11 + answer_len)) {  
+    if (resp_command_buffer[0] == 0xA5) {
+      if (resp_command_buffer[6] == ACK_SUCCESS) {
+        
+        unsigned short answer_len = (unsigned short)resp_command_buffer[7] * 256 + (unsigned short)resp_command_buffer[8];
+        if (resp_command_buffer_len >= (11 + answer_len)) {  
           // check CRC for pocket
+        
+        
           byte pocket[11 + answer_len];
           for(i = 0; i < 11 + answer_len; i++) {
-            pocket[i] = (byte)resp_command_buffer.charAt(i);
+            pocket[i] = resp_command_buffer[i];
             }
           // reset command:-)
-          resp_command_buffer = "";
+          resp_command_buffer_len = 0;
           resp_command_started = false;
           unsigned short crc = crc16(pocket,9 + answer_len);
           if (read2B(pocket,9 + answer_len)==crc) {
             // CRC valid, ready for command processing
             pocket_processing(pocket,11 + answer_len);
-            } 
+          } else {
+            resp_command_buffer_len = 0;
+            resp_command_started = false;
+            Serial.println("");
+            Serial.println("CRC INVALID");    
+            }
           }
       } else {
-        resp_command_buffer = "";
+        resp_command_buffer_len = 0;
         resp_command_started = false; 
         }
       }
@@ -439,11 +461,12 @@ void setup() {
   Serial1.begin(9600);
   Serial.begin(9600);
   // prepare buffer
-  resp_command_buffer.reserve(400);
   Serial.println("Start..");
   //delay(2000);
-  //getStatistic(0);
-  getActionRecords(0,true,false);
+  getStatistic(0);
+  //openDoor(0);
+  //getActionRecords(0,true,true); //all
+  //getActionRecords(0,true,false);  //new
   
   }
 
