@@ -452,13 +452,11 @@ void getStatistic(unsigned long device_id){
  * params @allrecords - all or new only records
  */
 void getActionRecords(unsigned long device_id, bool first = true, bool allrecords = false){
-  byte data[1];
-  data[0] = (first ? (allrecords ? 1 : 2) : 0);
-  data[1] = MAX_ACTION_RECORDS;
+  byte zdata[] = {(byte)(first ? (allrecords ? 1 : 2) : 0), (byte)MAX_ACTION_RECORDS};
   // try to save arguments to memory
   cmd_action_first = first;
   cmd_action_allrecords = allrecords;
-  sendCommand(CMD_ALL_GET_RECORDS,device_id,data,2);
+  sendCommand(CMD_ALL_GET_RECORDS,device_id,zdata,2);
   }
 
 /* == (0x42) Download staff info
@@ -468,10 +466,8 @@ void getActionRecords(unsigned long device_id, bool first = true, bool allrecord
  * params @first - mean first pocket of downloading
  */
 void getStaffRecords(unsigned long device_id, bool first = true){
-  byte data[1];
-  data[0] = (first ? 1 : 0);
-  data[1] = MAX_STAFF_RECORDS;
-  sendCommand(CMD_ALL_GET_STAFF,device_id,data,2);
+  byte zdata[] = {(byte)(first ? 1 : 0), (byte)MAX_STAFF_RECORDS};
+  sendCommand(CMD_ALL_GET_STAFF,device_id,zdata,2);
   }
 
 /* == (0x5E) Output signal to open lock without verifying user 
@@ -700,6 +696,10 @@ void serial_processing() {
       getStatistic(device_id);  
     } else if (str_cmd == "GET_STAFF") {
       getStaffRecords(device_id,true);  
+    } else if (str_cmd == "GET_ACTIONS") {
+      getActionRecords(device_id,true,true);  
+    } else if (str_cmd == "GET_NEW_ACTIONS") {
+      getActionRecords(device_id,true,false);  
       }
     inc_buffer_len = 0;
     inc_readonly = false;
@@ -730,11 +730,7 @@ void loop() {
   //serial_events(); 
   if (inc_readonly) {
     serial_processing();  
-    }
-  if (millis() % 10000 == 0) {
-    Serial.println();
-    getStaffRecords(0,true); //all
-    }  
+    }   
 }
 
 // 
