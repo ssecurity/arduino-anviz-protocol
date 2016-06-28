@@ -68,7 +68,7 @@
 #define CMD_ALL_SET_FACTORY 0x4B            //Modify the factory info code
 #define CMD_ALL_DEL_USERDATA 0x4C           //Delete the designated user data
 #define CMD_ALL_INIT_USERAREA 0x4D          //Initialize the user area
-#define CMD_ALL_CLR_RECORDS 0x4E            //Clear up Records /Clear new records sign
+#define CMD_ALL_CLR_RECORDS 0x4E            //  Clear up Records /Clear new records sign
 #define CMD_ALL_INIT_SYSTEM 0x4F            //Initialize System
 #define CMD_ALL_GET_TIMEZONE 0x50           //Get the time zone info
 #define CMD_ALL_SET_TIMEZONE 0x51           //Set time zone info
@@ -101,8 +101,8 @@
 #define CMD_C5_EMAIL_SETTINGS 0x7F          //C5 only. Sending Email
 
 // Special settings
-#define RXTX_PAUSE_TIME_MS 300              // Pause between RX and TX for correct communication
-#define SERIAL_PAUSE_TIME_MS 300            // Pause between RX and TX for correct communication
+#define RXTX_PAUSE_TIME_MS 200              // Pause between RX and TX for correct communication
+#define SERIAL_PAUSE_TIME_MS 200            // Pause between RX and TX for correct communication
 
 #define MAX_ACTION_RECORDS 25               // Max. Action records 
 #define MAX_STAFF_RECORDS 12                // Max. Staff records
@@ -360,6 +360,12 @@ unsigned short crc16(byte data[], unsigned short datacount) {
     return crc;
     }
 
+void doDelay(unsigned int delay_ms) {
+  unsigned long next_time = millis() + delay_ms; 
+  while (millis() < next_time) {
+    }
+  }
+
 // read value from bytes
 unsigned long readSomeBytes(byte data[], unsigned short pos, byte count = 1, bool MODE_HL = true) {
   unsigned long result = 0;
@@ -415,13 +421,13 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
     outdata[9+datacount] = (crc >> 8) % 256;
     outdata[8+datacount] = crc % 256;
     digitalWrite(22,HIGH);
-    delay(20);
+    doDelay(20);
     for(i = 0; i < 10+datacount; i++) {
         Serial1.write(outdata[i]);
         }
-    delay(20);
+    doDelay(20);
     digitalWrite(22,LOW);
-    delay(30);
+    doDelay(30);
     // reset start position of command 
     resp_command_buffer_len = 0;
     resp_command_started = false;
@@ -751,11 +757,7 @@ void serial_processing() {
       clearUpRecords(device_id,1,0);  
     } else if (str_cmd == "CLEAR_NEWPART") {
       clearUpRecords(device_id,2,1);  
-    }
-
-
-
-      
+      } 
     inc_buffer_len = 0;
     inc_readonly = false;
     }
@@ -767,7 +769,7 @@ void setup() {
   Serial1.begin(9600);
   Serial.begin(9600);
   // prepare buffer
-  //delay(2000);
+  //doDelay(2000);
   //openDoor(0);
   //getStatistic(0);
   //getActionRecords(0,true,true); //all
