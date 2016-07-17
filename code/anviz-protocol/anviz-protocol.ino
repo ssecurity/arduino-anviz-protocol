@@ -116,26 +116,34 @@ byte resp_command_buffer[400];              // buffer for answer
 unsigned short resp_command_buffer_len = 0; // buffer length for answer
 
 bool inc_readonly = false;                  // readonly for Serial
-byte inc_buffer[50];                        // incomming buffer for control
+byte inc_buffer[400];                       // incomming buffer for control
 unsigned short inc_buffer_len = 0;          // incomming buffer length for control
 unsigned long sending_timeout = 0;          // time then next command will sent 
 unsigned long reading_timeout = 0;          // time then we wait all data from Serial 
-
+unsigned long tplTequestedUser;           // last requested user
 byte clearup_mode = 0;
 
 
 // serial answer structure
 typedef struct {
-    char param_name[50];
-    byte param_size = 0;
+    String params[8];
+    char param_name[400];
+    unsigned short param_count = 0;
+    unsigned short param_size = 0;
     unsigned long device_id = 0; 
-    void parseCommand(byte data[], byte datacount) {
-      byte i = 0;
+    void parseCommand(byte data[], unsigned short datacount) {
+      unsigned short i = 0;
       param_size = 0;
+      param_count = 0;
+      params[param_count] = String("");
       for(i=0;i<datacount;i++) {
         if (data[i]==0x20) {
-          return;
+          if (params[param_count] != "") {
+            param_count++;
+            params[param_count] = String("");
+            }
         } else {
+          params[param_count]+=char(data[i]);
           param_name[param_size]=char(data[i]);
           param_size++;
           }
@@ -298,6 +306,41 @@ typedef struct {
     }
   } strAnswerStaffItem;
 
+// 0x44 answer structure (get fp)
+typedef struct {
+  byte fpData[337] ;                          // FP Data
+  void toString(unsigned long device_id, unsigned long &userCode) {
+    unsigned short i = 0;
+    Serial.print("FP1 ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    Serial.print(userCode);
+    Serial.print(",");
+    for(i=0;i<338;i++) {
+      Serial.print(fpData[i] < 16 ? "0" : "");
+      Serial.print(fpData[i],HEX); 
+      }
+    Serial.println("");  
+    }
+  } strAnswerGetFp1;
+
+// 0x44 answer structure (get fp)
+typedef struct {
+  byte fpData[1279] ;                          // FP Data
+  void toString(unsigned long device_id, unsigned long &userCode) {
+    unsigned short i = 0;
+    Serial.print("FP2 ");
+    Serial.print(device_id);
+    Serial.print(" ");
+    Serial.print(userCode);
+    Serial.print(",");
+    for(i=0;i<1280;i++) {
+      Serial.print(fpData[i] < 16 ? "0" : "");
+      Serial.print(fpData[i],HEX); 
+      }
+    Serial.println("");  
+    }
+  } strAnswerGetFp2;
 
 // 0x4E answer structure
 typedef struct {
@@ -402,6 +445,7 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
     unsigned short i = 0;
     unsigned short crc = 0x0000;
     byte outdata[9+datacount];
+    digitalWrite(19,LOW);
     Serial.print("");
     for(i = 0; i < 10+datacount; i++) {
         outdata[i] = 0x00;
@@ -427,6 +471,7 @@ void sendCommand(byte command, unsigned long device_id, byte data[], unsigned sh
         }
     doDelay(20);
     digitalWrite(22,LOW);
+    digitalWrite(19,HIGH);
     doDelay(30);
     // reset start position of command 
     resp_command_buffer_len = 0;
@@ -490,6 +535,24 @@ void getStaffRecords(unsigned long device_id, bool first = true){
   sendCommand(CMD_ALL_GET_STAFF,device_id,zdata,2);
   }
 
+/* == (0x44)Download FP Template
+ * Download FP Template from T&A device
+ *
+ * params @device_id - when is "0" then all devices connected will response to this command
+ * params @mode - Backup code: 1- FP1, 2 –FP2 (338 or 1280 bytes)
+ */
+void getFP_TPL(unsigned long device_id, unsigned long xxuser_id, byte mode = 1){
+  byte zdata[5];
+  zdata[0] = 0;
+  zdata[1] = (xxuser_id >> 24) % 256;
+  zdata[2] = (xxuser_id >> 16) % 256;
+  zdata[3] = (xxuser_id >> 8) % 256;
+  zdata[4] = xxuser_id % 256;
+  zdata[5] = (mode == 1 ? 1 : 2);
+  sendCommand(CMD_ALL_GET_FP_TPL,device_id,zdata,6);
+  }
+
+
 /* == (0x4E) Clear up Records /Clear new records sign
  * Cancel all records, or cancel all/part new records sign.
  *
@@ -526,7 +589,13 @@ void openDoor(unsigned long device_id){
 
 // Wait answer and stock it in buffer
 void stock_device_answer() {
+  bool enbled = false;
   while (Serial1.available() > 0) {
+    if (!enbled) {
+      digitalWrite(18,LOW);
+      enbled = true;
+      }
+    
     byte b = Serial1.read();
     if (!resp_command_started) {
       if (b == 0xA5) { 
@@ -543,6 +612,9 @@ void stock_device_answer() {
       // display answer
       }  
     }
+    if (enbled) {
+      digitalWrite(18,HIGH);
+      }
   }
 
 // processing pocket data
@@ -558,6 +630,9 @@ void pocket_processing(byte data[], unsigned short datacount) {
         if (read2B(data,9 + answer_len)==crc) {
           // valid command format
           Serial.print("");
+          Serial.println();
+          Serial.print("SER_USR: ");
+          Serial.println(tplTequestedUser);
           unsigned long device_id = read4B(data,1, false);
           switch(data[5]) {
             case CMD_ALL_GET_INFO + 0x80: // (0x30 + 0x80) Get the information of T&A device 1
@@ -638,6 +713,26 @@ void pocket_processing(byte data[], unsigned short datacount) {
               }
             break;
 
+            case CMD_ALL_GET_FP_TPL + 0x80: // (0x44 + 0x80) Download FP_TPL
+            
+            if (answer_len == 338) {
+              strAnswerGetFp1 answ_44_1;
+              for(j = 0; j < 338; j++) {
+                answ_44_1.fpData[j] = data[9+j];
+                }
+              unsigned long v =   tplTequestedUser;
+              answ_44_1.toString(device_id, v);
+              
+            } else if (answer_len == 1280) {
+              strAnswerGetFp2 answ_44_2;
+              for(j = 0; j < 1280; j++) {
+                answ_44_2.fpData[j] = data[9+j];
+                }
+               unsigned long v =   tplTequestedUser;
+               answ_44_2.toString(device_id, v);
+               }    
+            break;
+
             case CMD_ALL_CLR_RECORDS + 0x80: // (0x4E + 0x80) Clear up Records /Clear new records sign
             strAnswerCleanUp answ_4E;
             answ_4E.amount = read3B(data,9, false);            
@@ -705,7 +800,7 @@ void serial_events(){
       if (b != 0x0A && !inc_readonly) {        
         inc_buffer[inc_buffer_len] = b;
         inc_buffer_len++;
-        inc_buffer_len = inc_buffer_len % 51;
+        inc_buffer_len = inc_buffer_len % 401;
         reading_timeout = millis() + SERIAL_PAUSE_TIME_MS;
       } else {
         // processing command
@@ -725,18 +820,22 @@ void serial_processing() {
     
     while(Serial1.available() > 0) {
       byte b = Serial1.read();
+      Serial.print(b < 16 ? "0" : "");
+      Serial.print(b, HEX);
       }   
     Serial1.flush();
     Serial.print("");
+    Serial.print("tplTequestedUser before parsing: ");
+    Serial.println(tplTequestedUser);
     serialCommand cmd;
     cmd.parseCommand(inc_buffer,inc_buffer_len);
     unsigned long device_id = 0;
-    String str_cmd = "";
-    str_cmd.reserve(cmd.param_size);
-    str_cmd = "";
-    for(byte ix = 0; ix < cmd.param_size;ix++) {
-      str_cmd += cmd.param_name[ix];  
+    unsigned long i_param_2 = 0;
+    String str_cmd = cmd.params[0];
+    if (cmd.param_count >=1) {
+      device_id = cmd.params[1].toInt();
       }
+    
     if (str_cmd == "OPEN_DOOR") {
       openDoor(device_id);  
     } else if (str_cmd == "GET_DEVINFO") {
@@ -757,14 +856,41 @@ void serial_processing() {
       clearUpRecords(device_id,1,0);  
     } else if (str_cmd == "CLEAR_NEWPART") {
       clearUpRecords(device_id,2,1);  
-      } 
+    } else if (str_cmd == "GET_FP1") {
+      i_param_2 = 1;
+      
+      if (cmd.param_count >=2) {
+        i_param_2 = cmd.params[2].toInt();
+        }
+      tplTequestedUser = i_param_2; 
+      Serial.print("tplTequestedUser: ");
+      Serial.println(tplTequestedUser);
+      
+      unsigned long v =   tplTequestedUser;
+      getFP_TPL(device_id,v,1);
+      
+    } else if (str_cmd == "GET_FP2") {
+      // not actual for T5Pro
+      i_param_2 = 1;
+      if (cmd.param_count >=2) {
+        i_param_2 = cmd.params[2].toInt();
+        }
+      tplTequestedUser = i_param_2; 
+       unsigned long v =   tplTequestedUser;
+      getFP_TPL(device_id,v,2); 
+      }  
     inc_buffer_len = 0;
     inc_readonly = false;
     }
   }  
 
 void setup() {
+  pinMode(18,OUTPUT);
+  pinMode(19,OUTPUT);
   pinMode(22,OUTPUT);
+  tplTequestedUser = 0;
+  digitalWrite(18,HIGH);
+  digitalWrite(19,HIGH);
   digitalWrite(22,LOW);  
   Serial1.begin(9600);
   Serial.begin(9600);
@@ -777,6 +903,7 @@ void setup() {
   //getStaffRecords(0,true);
   //getDeviceDateTime(0);
   //getDeviceInfo(0);
+  //getFP_TPL(0,1,1);
   }
 
 void loop() {
@@ -785,7 +912,11 @@ void loop() {
   process_device_answer();
   //serial_events(); 
   if (inc_readonly) {
+    Serial.print("Need serial processing: ");
+    Serial.println(tplTequestedUser);
     serial_processing();  
+    Serial.print("After serial processing: ");
+    Serial.println(tplTequestedUser);
     }   
 }
 
@@ -798,7 +929,7 @@ void serialEvent(){
       if (b != 0x0A) {        
         inc_buffer[inc_buffer_len] = b;
         inc_buffer_len++;
-        inc_buffer_len = inc_buffer_len % 51;
+        inc_buffer_len = inc_buffer_len % 401;
         reading_timeout = millis() + SERIAL_PAUSE_TIME_MS;
       } else {
         // processing command
